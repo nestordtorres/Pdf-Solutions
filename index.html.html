@@ -1,0 +1,1167 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rellenar y Aplanar PDF</title>
+<style>
+  :root{
+    --bg:#fffafc;
+    --surface:#ffffff;
+    --surface-2:#fdf0f6;
+    --border:#f6d3e3;
+    --paper:#ffffff;
+    --paper-line:#f0c9dc;
+    --text:#3a2230;
+    --text-dim:#b0879b;
+    --accent:#ec5d92;
+    --accent-deep:#c43d72;
+    --ok:#4caf7d;
+    --warn:#d9a440;
+    --danger:#d6455a;
+    --readout:#c43d72;
+    --font-ui: -apple-system, "Segoe UI", system-ui, sans-serif;
+    --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--font-ui);
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+  .app{ max-width:1180px; margin:0 auto; padding:18px 18px 40px; }
+
+  /* ---------- Header / readout bar ---------- */
+  .topbar{ display:flex; align-items:stretch; gap:14px; flex-wrap:wrap; margin-bottom:18px; }
+  .brand{ display:flex; flex-direction:column; justify-content:center; gap:2px; flex:1; min-width:240px; }
+  .brand h1{ margin:0; font-size:15px; letter-spacing:.14em; text-transform:uppercase; font-weight:800; color:var(--text); }
+  .brand p{ margin:0; font-size:12.5px; color:var(--text-dim); max-width:480px; }
+  .readout{
+    background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:10px 16px;
+    font-family:var(--font-mono); font-size:12px; letter-spacing:.06em; color:var(--readout);
+    display:flex; align-items:center; gap:18px; box-shadow:inset 0 0 10px rgba(196,61,114,.10); min-width:300px;
+  }
+  .readout .seg{display:flex;flex-direction:column;gap:2px;}
+  .readout .seg b{color:var(--readout);font-size:13px;}
+  .readout .seg span{color:#caa0b5;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;}
+  .readout .dot{width:7px;height:7px;border-radius:50%;background:var(--text-dim);}
+  .readout .dot.live{background:var(--readout);box-shadow:0 0 6px var(--readout);}
+
+  /* ---------- Layout ---------- */
+  .grid{ display:grid; grid-template-columns:1.4fr 1fr; gap:16px; align-items:start; }
+  @media (max-width:880px){ .grid{grid-template-columns:1fr;} }
+  .panel{ background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:16px; }
+  .panel h2{ margin:0 0 12px; font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--text-dim); font-weight:700; }
+
+  /* ---------- Dropzone ---------- */
+  .dropzone{
+    border:2px dashed var(--border); border-radius:10px; padding:46px 20px; text-align:center;
+    cursor:pointer; transition:border-color .15s, background .15s; color:var(--text-dim);
+  }
+  .dropzone:hover, .dropzone.drag{ border-color:var(--accent); background:rgba(236,93,146,.07); }
+  .dropzone .glyph{
+    width:46px;height:46px;margin:0 auto 14px; border:2px solid currentColor;border-radius:6px;
+    display:flex;align-items:center;justify-content:center; font-size:20px;color:var(--accent);
+  }
+  .dropzone strong{color:var(--text);display:block;margin-bottom:4px;font-size:14px;}
+  .dropzone small{font-size:11.5px;}
+
+  /* ---------- Preview card ---------- */
+  .sheet-wrap{ display:flex; flex-direction:column; align-items:center; gap:12px; }
+  .sheet{
+    background:var(--paper); border:1px solid var(--paper-line); border-radius:3px;
+    box-shadow:0 14px 32px rgba(0,0,0,.45), 0 1px 0 var(--paper-line);
+    padding:10px; max-width:100%; overflow:auto;
+  }
+  .sheet canvas{display:block;max-width:100%;}
+  .pager{ display:flex; align-items:center; gap:14px; font-family:var(--font-mono); font-size:12.5px; color:var(--text-dim); flex-wrap:wrap; }
+  .pager button{
+    background:var(--surface-2); border:1px solid var(--border); color:var(--text);
+    width:30px;height:30px; border-radius:6px; cursor:pointer; font-size:13px; line-height:1;
+  }
+  .pager button:disabled{opacity:.35;cursor:default;}
+  .pager button:hover:not(:disabled){border-color:var(--accent);}
+  .goto-wrap{ display:flex; align-items:center; gap:6px; }
+  .goto-page-input{
+    width:54px; background:#ffffff; border:1px solid var(--border); color:var(--text);
+    border-radius:6px; padding:5px 6px; font-size:12.5px; font-family:var(--font-mono); text-align:center;
+  }
+  .goto-page-input:focus-visible{ outline:2px solid var(--accent); outline-offset:1px; }
+  .goto-page-input:disabled{ opacity:.4; }
+
+  /* ---------- Image overlay tool ---------- */
+  .canvas-stage{ position:relative; display:inline-block; line-height:0; }
+  .img-toolbar{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:11.5px; color:var(--text-dim); }
+  .img-toolbar-hint{font-family:var(--font-mono);font-size:10.5px;}
+  .bg-toggle{ display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-dim); cursor:pointer; }
+  .bg-toggle input{ accent-color:var(--accent); }
+  #removeBgSensitivity{ width:110px; accent-color:var(--accent); }
+  .img-overlay{
+    position:absolute; border:1.5px dashed var(--accent); background:rgba(236,93,146,.08);
+    cursor:move; touch-action:none; box-shadow:0 0 0 1px rgba(0,0,0,.08);
+  }
+  .img-overlay img{ width:100%;height:100%;display:block; pointer-events:none; -webkit-user-drag:none; }
+  .img-overlay .handle{
+    position:absolute; right:-6px;bottom:-6px; width:14px;height:14px;
+    background:var(--accent); border:2px solid #ffffff; border-radius:3px; cursor:nwse-resize; touch-action:none;
+  }
+  .img-overlay.fixed{ border:1.5px solid var(--ok); background:rgba(95,181,131,.06); cursor:default; }
+  .img-overlay.fixed.hidden{ display:none; }
+  .img-overlay .remove-btn{
+    position:absolute; top:-10px; right:-10px; width:18px;height:18px; border-radius:50%;
+    background:var(--danger); color:#fff; border:none; font-size:11px; line-height:18px;
+    text-align:center; cursor:pointer; padding:0; pointer-events:auto;
+  }
+
+  /* ---------- Field list ---------- */
+  .field-search{
+    width:100%; background:var(--surface-2); border:1px solid var(--border); color:var(--text);
+    border-radius:7px; padding:8px 10px; font-size:12.5px; margin-bottom:10px;
+  }
+  .field-panel-sub{ font-family:var(--font-mono); font-size:10.8px; color:var(--text-dim); margin:-8px 0 10px; }
+  .page-filter-toggle{ display:flex; align-items:center; gap:7px; font-size:11px; color:var(--text-dim); margin-bottom:10px; cursor:pointer; }
+  .page-filter-toggle input{accent-color:var(--accent);}
+  .field-list{ max-height:420px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; background:var(--surface-2); }
+  .field-row{ display:grid; grid-template-columns:1fr 1.1fr; gap:10px; align-items:center; padding:9px 12px; border-bottom:1px solid var(--border); }
+  .field-row:last-child{border-bottom:none;}
+  .field-row-highlight{ animation: fieldFlash 1.4s ease-out; }
+  @keyframes fieldFlash{
+    0%   { background: rgba(236,93,146,.35); }
+    100% { background: transparent; }
+  }
+  .field-name{ font-family:var(--font-mono); font-size:11.3px; color:var(--text-dim); word-break:break-all; line-height:1.3; }
+  .field-name .tag{
+    display:inline-block; margin-top:3px; font-size:9px; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--accent); border:1px solid var(--accent-deep); border-radius:3px; padding:1px 4px;
+  }
+  .field-row input[type="text"], .field-row select{
+    width:100%; background:#ffffff; border:1px solid var(--border); color:var(--text);
+    border-radius:6px; padding:6px 8px; font-size:12.5px; font-family:var(--font-ui);
+  }
+  .field-row input[type="text"]:focus-visible, .field-row select:focus-visible{ outline:2px solid var(--accent); outline-offset:1px; }
+  .field-row input[type="checkbox"]{ width:18px;height:18px;accent-color:var(--accent); }
+  .field-empty{ padding:24px 14px; text-align:center; color:var(--text-dim); font-size:12.5px; }
+
+  /* ---------- Buttons ---------- */
+  .actions{ display:flex; gap:10px; margin-top:14px; flex-wrap:wrap; }
+  button.btn{
+    font-family:var(--font-ui); font-size:12.8px; font-weight:700; letter-spacing:.02em; border-radius:7px;
+    padding:10px 16px; cursor:pointer; border:1px solid var(--border); background:var(--surface-2); color:var(--text);
+    transition:transform .08s, border-color .15s;
+  }
+  button.btn:hover{border-color:var(--accent);}
+  button.btn:active{transform:translateY(1px);}
+  button.btn:disabled{opacity:.4;cursor:default;transform:none;}
+  button.btn.primary{
+    background:linear-gradient(180deg,var(--accent),var(--accent-deep)); border-color:var(--accent-deep); color:#ffffff;
+  }
+  button.btn.ghost{background:transparent;}
+
+  /* ---------- Log ---------- */
+  .log{ margin-top:16px; font-family:var(--font-mono); font-size:11.5px; border:1px solid var(--border); border-radius:8px; background:#fff5f9; max-height:140px; overflow-y:auto; }
+  .log .line{ padding:6px 12px; border-bottom:1px solid var(--border); color:var(--text-dim); }
+  .log .line:last-child{border-bottom:none;}
+  .log .line.ok{color:var(--ok);}
+  .log .line.warn{color:var(--warn);}
+  .log .line.error{color:var(--danger);}
+
+  .footer-note{ margin-top:18px; font-size:11px; color:var(--text-dim); line-height:1.5; }
+  .footer-note b{color:var(--text);}
+  .hidden{display:none !important;}
+  .dedication{
+    position:fixed; bottom:10px; right:14px; font-size:11.5px; font-style:italic;
+    color:var(--accent-deep); opacity:.85; pointer-events:none;
+    font-family: Georgia, "Times New Roman", serif; letter-spacing:.01em;
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <div class="topbar">
+    <div class="brand">
+      <h1>Rellenar + Aplanar PDF</h1>
+      <p>Carga un PDF con campos AcroForm, edítalos sobre la vista previa, agrega imágenes y descarga el resultado aplanado. Todo ocurre en tu navegador.</p>
+    </div>
+    <div class="readout">
+      <span class="dot" id="statusDot"></span>
+      <div class="seg"><b id="readoutFile">—</b><span>Archivo</span></div>
+      <div class="seg"><b id="readoutFields">0</b><span>Campos</span></div>
+      <div class="seg"><b id="readoutPage">0/0</b><span>Página</span></div>
+      <div class="seg"><b id="readoutStatus">Listo</b><span>Estado</span></div>
+    </div>
+  </div>
+
+  <div class="grid">
+
+    <!-- LEFT: preview -->
+    <div class="panel">
+      <h2>Vista previa</h2>
+      <div class="field-panel-sub" id="previewHint" style="display:none;">Haz clic sobre un campo en la página para ubicarlo en la lista de la derecha.</div>
+
+      <div id="dropzone" class="dropzone">
+        <div class="glyph">＋</div>
+        <strong>Arrastra un PDF aquí</strong>
+        <small>o haz clic para seleccionarlo desde tu equipo</small>
+      </div>
+      <input type="file" id="fileInput" accept="application/pdf" class="hidden">
+
+      <div id="sheetWrap" class="sheet-wrap hidden">
+        <input type="file" id="imageFileInput" accept="image/*" class="hidden">
+
+        <div class="sheet">
+          <div class="canvas-stage" id="canvasStage">
+            <canvas id="pdfCanvas"></canvas>
+          </div>
+        </div>
+
+        <div class="img-toolbar" id="imgToolbarIdle">
+          <button id="insertImageBtn" class="btn" type="button">+ Insertar imagen (firma, foto, sello…)</button>
+        </div>
+        <div class="img-toolbar hidden" id="imgToolbarPending">
+          <span class="img-toolbar-hint">Arrastra para mover · usa la esquina para redimensionar</span>
+          <label class="bg-toggle">
+            <input type="checkbox" id="removeBgToggle">
+            Quitar fondo blanco
+          </label>
+          <input type="range" id="removeBgSensitivity" min="160" max="250" value="225" class="hidden" title="Sensibilidad del recorte">
+          <button id="fixImageBtn" class="btn primary" type="button">Fijar en la página</button>
+          <button id="cancelImageBtn" class="btn ghost" type="button">Cancelar</button>
+        </div>
+
+        <div class="pager">
+          <button id="prevPage" class="btn" aria-label="Página anterior">◀</button>
+          <span id="pageIndicator">Página 0 / 0</span>
+          <button id="nextPage" class="btn" aria-label="Página siguiente">▶</button>
+          <span class="goto-wrap">
+            <input type="number" id="gotoPageInput" min="1" placeholder="#" class="goto-page-input" title="Ir a la página…" disabled>
+            <button id="gotoPageBtn" class="btn" type="button" disabled>Ir</button>
+          </span>
+          <button id="loadAnother" class="btn ghost" style="margin-left:10px;">Cargar otro PDF</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: fields -->
+    <div class="panel">
+      <h2>Campos detectados</h2>
+      <div id="fieldPanelSub" class="field-panel-sub"></div>
+      <input type="text" id="fieldSearch" class="field-search" placeholder="Filtrar por nombre de campo…" disabled>
+      <label class="page-filter-toggle">
+        <input type="checkbox" id="pageFilterToggle" disabled>
+        Mostrar todos los campos del documento (no solo esta página)
+      </label>
+      <div id="fieldList" class="field-list">
+        <div class="field-empty">Carga un PDF para ver sus campos de formulario.</div>
+      </div>
+
+      <div class="actions">
+        <button id="applyBtn" class="btn" disabled>Aplicar valores</button>
+        <button id="flattenBtn" class="btn primary" disabled>Aplanar y descargar</button>
+      </div>
+
+      <div id="log" class="log"></div>
+    </div>
+  </div>
+
+  <p class="footer-note">
+    <b>Privacidad:</b> el PDF nunca se sube a ningún servidor — se procesa enteramente en la memoria de tu navegador con
+    <b>pdf.js</b> (vista previa) y <b>pdf-lib</b> (lectura/escritura de campos, inserción de imágenes y aplanado).
+    Funciona con formularios <b>AcroForm</b> estándar; no es compatible con formularios XFA dinámicos de Adobe LiveCycle.
+    Las imágenes que insertes con <b>"+ Insertar imagen"</b> se incrustan recién al presionar <b>"Aplanar y descargar"</b>,
+    justo después de aplanar los campos del formulario, para garantizar que queden por encima de todo el contenido
+    (incluidos los recuadros de los campos) en el archivo final. La opción <b>"Quitar fondo blanco"</b> es útil para
+    firmas o sellos escaneados con fondo claro: vuelve transparente el papel y conserva la tinta.
+  </p>
+</div>
+
+<div class="dedication">Para mi bella esposa Rebeca ♥</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+  // ---------- State ----------
+  let originalBytes = null;      // Uint8Array, the file as first loaded
+  let workingBytes = null;       // Uint8Array, current state (after applying field values)
+  let pdfjsDoc = null;            // current pdf.js document (for preview)
+  let fieldDescriptors = [];      // [{name, type, value, options}]
+  let currentPage = 1;
+  let totalPages = 0;
+  let baseFilename = "documento";
+  let currentRenderScale = 1;     // px (canvas-intrinsic) per PDF point, for the current page
+  let currentPageHeightPt = 0;    // current page height in PDF points
+  let fieldPagesByName = {};      // fieldName -> array of 1-based page numbers it appears on
+  let fieldRectsByPage = {};      // pageNumber -> [{name, x1, y1, x2, y2}] in PDF points (bottom-left origin)
+  let showAllFields = false;      // bypass the page filter on the field list
+
+  let pendingOverlay = null;      // {el, pngBytes, dataUrl} - the ONE draft image being positioned/resized
+  let fixedImages = [];           // [{page, xPt, yPt, wPt, hPt, pngBytes, dataUrl, el}] confirmed, not yet embedded into the PDF bytes
+
+  // ---------- DOM ----------
+  const dropzone        = document.getElementById('dropzone');
+  const fileInput       = document.getElementById('fileInput');
+  const sheetWrap        = document.getElementById('sheetWrap');
+  const canvas           = document.getElementById('pdfCanvas');
+  const prevBtn           = document.getElementById('prevPage');
+  const nextBtn           = document.getElementById('nextPage');
+  const pageIndicator     = document.getElementById('pageIndicator');
+  const gotoPageInput     = document.getElementById('gotoPageInput');
+  const gotoPageBtn       = document.getElementById('gotoPageBtn');
+  const loadAnotherBtn    = document.getElementById('loadAnother');
+  const canvasStage        = document.getElementById('canvasStage');
+  const imageFileInput     = document.getElementById('imageFileInput');
+  const insertImageBtn     = document.getElementById('insertImageBtn');
+  const imgToolbarIdle       = document.getElementById('imgToolbarIdle');
+  const imgToolbarPending    = document.getElementById('imgToolbarPending');
+  const fixImageBtn        = document.getElementById('fixImageBtn');
+  const cancelImageBtn     = document.getElementById('cancelImageBtn');
+  const removeBgToggle      = document.getElementById('removeBgToggle');
+  const removeBgSensitivity = document.getElementById('removeBgSensitivity');
+  const fieldList         = document.getElementById('fieldList');
+  const fieldSearch       = document.getElementById('fieldSearch');
+  const fieldPanelSub      = document.getElementById('fieldPanelSub');
+  const previewHint        = document.getElementById('previewHint');
+  const pageFilterToggle   = document.getElementById('pageFilterToggle');
+  const applyBtn          = document.getElementById('applyBtn');
+  const flattenBtn        = document.getElementById('flattenBtn');
+  const logEl             = document.getElementById('log');
+
+  const readoutFile   = document.getElementById('readoutFile');
+  const readoutFields = document.getElementById('readoutFields');
+  const readoutPage   = document.getElementById('readoutPage');
+  const readoutStatus = document.getElementById('readoutStatus');
+  const statusDot     = document.getElementById('statusDot');
+
+  // ---------- Helpers ----------
+  function log(message, level){
+    const line = document.createElement('div');
+    line.className = 'line' + (level ? ' ' + level : '');
+    const time = new Date().toLocaleTimeString();
+    line.textContent = `[${time}] ${message}`;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function setStatus(text, live){
+    readoutStatus.textContent = text;
+    statusDot.classList.toggle('live', !!live);
+  }
+
+  function downloadBytes(bytes, filename){
+    const blob = new Blob([bytes], {type:'application/pdf'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 4000);
+  }
+
+  function fieldTypeLabel(type){
+    switch(type){
+      case 'text': return 'Texto';
+      case 'checkbox': return 'Casilla';
+      case 'radio': return 'Radio';
+      case 'dropdown': return 'Lista';
+      case 'optionlist': return 'Lista';
+      case 'button': return 'Botón';
+      case 'signature': return 'Firma';
+      default: return 'N/D';
+    }
+  }
+
+  function cssEscape(str){ return String(str).replace(/["\\]/g, '\\$&'); }
+
+  // ---------- File loading (PDF) ----------
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault(); dropzone.classList.remove('drag');
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', e => {
+    if (e.target.files && e.target.files[0]) handleFile(e.target.files[0]);
+  });
+  loadAnotherBtn.addEventListener('click', resetTool);
+
+  function resetTool(){
+    cancelDraftOverlay();
+    clearFixedImages();
+    originalBytes = null; workingBytes = null; pdfjsDoc = null;
+    fieldDescriptors = []; currentPage = 1; totalPages = 0;
+    fieldPagesByName = {}; fieldRectsByPage = {}; showAllFields = false;
+    sheetWrap.classList.add('hidden');
+    dropzone.classList.remove('hidden');
+    fieldList.innerHTML = '<div class="field-empty">Carga un PDF para ver sus campos de formulario.</div>';
+    fieldSearch.value = ''; fieldSearch.disabled = true;
+    pageFilterToggle.checked = false; pageFilterToggle.disabled = true;
+    fieldPanelSub.textContent = '';
+    applyBtn.disabled = true; flattenBtn.disabled = true;
+    gotoPageInput.value = ''; gotoPageInput.disabled = true; gotoPageBtn.disabled = true;
+    readoutFile.textContent = '—'; readoutFields.textContent = '0'; readoutPage.textContent = '0/0';
+    setStatus('Listo', false);
+    fileInput.value = '';
+  }
+
+  async function handleFile(file){
+    if (!file.type || file.type !== 'application/pdf'){
+      if (!file.name.toLowerCase().endsWith('.pdf')){
+        log('El archivo seleccionado no parece ser un PDF.', 'error');
+        return;
+      }
+    }
+    baseFilename = file.name.replace(/\.pdf$/i, '');
+    setStatus('Cargando…', true);
+    log(`Cargando "${file.name}"…`);
+    try{
+      const buf = await file.arrayBuffer();
+      originalBytes = new Uint8Array(buf);
+      workingBytes = originalBytes.slice(0);
+      await loadIntoTool(workingBytes);
+      readoutFile.textContent = file.name.length > 22 ? file.name.slice(0,20)+'…' : file.name;
+      dropzone.classList.add('hidden');
+      sheetWrap.classList.remove('hidden');
+      setStatus('Listo', false);
+      log('PDF cargado correctamente.', 'ok');
+    } catch(err){
+      console.error(err);
+      log('No se pudo leer el PDF: ' + err.message, 'error');
+      setStatus('Error', false);
+    }
+  }
+
+  async function loadIntoTool(bytes){
+    // 1) pdf-lib: read AcroForm fields + map each field (by the SAME name used to edit it)
+    //    to the page(s)/rectangle(s) it actually appears on. Using pdf-lib for both the
+    //    editable list and this map (instead of mixing in pdf.js) guarantees the names
+    //    always match exactly, even on documents with duplicated/repeated table blocks.
+    const pdfDoc = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption:true });
+    const form = pdfDoc.getForm();
+    fieldDescriptors = describeFields(form);
+    fieldPagesByName = buildFieldMapsFromPdfLib(pdfDoc, form);
+    readoutFields.textContent = String(fieldDescriptors.length);
+    applyBtn.disabled = fieldDescriptors.length === 0;
+    flattenBtn.disabled = false;
+    fieldSearch.disabled = fieldDescriptors.length === 0;
+    pageFilterToggle.disabled = fieldDescriptors.length === 0;
+
+    // 2) pdf.js: render preview only
+    pdfjsDoc = await pdfjsLib.getDocument({ data: bytes.slice(0) }).promise;
+    totalPages = pdfjsDoc.numPages;
+    currentPage = 1;
+    gotoPageInput.max = String(totalPages);
+    gotoPageInput.disabled = false;
+    gotoPageBtn.disabled = false;
+
+    buildFieldPanel(fieldDescriptors);
+    await renderCurrentPage();
+  }
+
+  function buildFieldMapsFromPdfLib(pdfDoc, form){
+    const pagesByName = {};
+    fieldRectsByPage = {};
+    try{
+      const pages = pdfDoc.getPages();
+      // Map each widget annotation object (by reference identity) to its page index,
+      // by walking every page's /Annots array and resolving each entry through the
+      // document's context — pdf-lib caches resolved objects, so the same widget
+      // dict instance returned here will be === the one returned by a field's widgets.
+      const widgetToPageIndex = new Map();
+      pages.forEach((page, idx) => {
+        let annots;
+        try{ annots = page.node.Annots ? page.node.Annots() : undefined; } catch(e){ annots = undefined; }
+        if (!annots) return;
+        const size = (typeof annots.size === 'function') ? annots.size() : 0;
+        for (let i = 0; i < size; i++){
+          try{
+            const ref = annots.get(i);
+            const obj = pdfDoc.context.lookup(ref);
+            if (obj) widgetToPageIndex.set(obj, idx);
+          } catch(e){ /* skip this annotation */ }
+        }
+      });
+
+      const fields = form.getFields();
+      for (const f of fields){
+        let name; try{ name = f.getName(); } catch(e){ continue; }
+        let widgets = [];
+        try{ widgets = f.acroField.getWidgets(); } catch(e){ widgets = []; }
+        const pageSet = new Set();
+        for (const w of widgets){
+          const pageIdx = widgetToPageIndex.get(w.dict);
+          if (typeof pageIdx !== 'number') continue;
+          const pageNum = pageIdx + 1;
+          pageSet.add(pageNum);
+          let rect = null;
+          try{ rect = w.getRectangle(); } catch(e){ rect = null; }
+          if (rect){
+            if (!fieldRectsByPage[pageNum]) fieldRectsByPage[pageNum] = [];
+            fieldRectsByPage[pageNum].push({
+              name,
+              x1: rect.x, y1: rect.y,
+              x2: rect.x + rect.width, y2: rect.y + rect.height
+            });
+          }
+        }
+        pagesByName[name] = Array.from(pageSet).sort((a,b) => a - b);
+      }
+    } catch(e){ /* leave maps empty -> fields fall back to showing on every page, no click-to-locate */ }
+    return pagesByName;
+  }
+
+  function describeFields(form){
+    let raw;
+    try{ raw = form.getFields(); } catch(e){ raw = []; }
+    const out = [];
+    for (const f of raw){
+      let name; try{ name = f.getName(); } catch(e){ continue; }
+      let type = 'unsupported', value = '', options = null;
+      try{
+        if (f instanceof PDFLib.PDFTextField){
+          type = 'text'; value = f.getText() || '';
+        } else if (f instanceof PDFLib.PDFCheckBox){
+          type = 'checkbox'; value = f.isChecked();
+        } else if (f instanceof PDFLib.PDFRadioGroup){
+          type = 'radio'; options = f.getOptions(); value = f.getSelected() || '';
+        } else if (f instanceof PDFLib.PDFDropdown){
+          type = 'dropdown'; options = f.getOptions();
+          const sel = f.getSelected(); value = (sel && sel[0]) || '';
+        } else if (f instanceof PDFLib.PDFOptionList){
+          type = 'optionlist'; options = f.getOptions();
+          const sel = f.getSelected(); value = (sel && sel[0]) || '';
+        } else if (f instanceof PDFLib.PDFButton){
+          type = 'button';
+        } else if (f instanceof PDFLib.PDFSignature){
+          type = 'signature';
+        }
+      } catch(e){ /* leave defaults */ }
+      out.push({ name, type, value, options });
+    }
+    return out;
+  }
+
+  function buildFieldPanel(descriptors){
+    fieldList.innerHTML = '';
+    if (descriptors.length === 0){
+      fieldList.innerHTML = '<div class="field-empty">Este PDF no tiene campos AcroForm rellenables. Aún puedes insertar imágenes o aplanarlo.</div>';
+      return;
+    }
+    for (const desc of descriptors){
+      const row = document.createElement('div');
+      row.className = 'field-row';
+      row.dataset.fieldName = desc.name;
+      const pages = fieldPagesByName[desc.name];
+      row.dataset.pages = (pages && pages.length) ? pages.join(',') : 'all';
+
+      const nameCol = document.createElement('div');
+      nameCol.className = 'field-name';
+      nameCol.textContent = desc.name;
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = fieldTypeLabel(desc.type);
+      nameCol.appendChild(document.createElement('br'));
+      nameCol.appendChild(tag);
+      row.appendChild(nameCol);
+
+      let control;
+      if (desc.type === 'text'){
+        control = document.createElement('input');
+        control.type = 'text';
+        control.value = desc.value || '';
+      } else if (desc.type === 'checkbox'){
+        control = document.createElement('input');
+        control.type = 'checkbox';
+        control.checked = !!desc.value;
+      } else if (desc.type === 'radio' || desc.type === 'dropdown' || desc.type === 'optionlist'){
+        control = document.createElement('select');
+        const blank = document.createElement('option');
+        blank.value = ''; blank.textContent = '— sin seleccionar —';
+        control.appendChild(blank);
+        (desc.options || []).forEach(opt => {
+          const o = document.createElement('option');
+          o.value = opt; o.textContent = opt;
+          if (opt === desc.value) o.selected = true;
+          control.appendChild(o);
+        });
+      } else {
+        control = document.createElement('div');
+        control.style.color = 'var(--text-dim)';
+        control.style.fontSize = '12px';
+        control.textContent = desc.type === 'signature' ? 'Requiere firma manual' : 'No editable';
+      }
+      control.dataset.field = desc.name;
+      row.appendChild(control);
+      fieldList.appendChild(row);
+    }
+  }
+
+  function applyFieldPageFilter(){
+    const q = fieldSearch.value.trim().toLowerCase();
+    const rows = fieldList.querySelectorAll('.field-row');
+    let visibleCount = 0;
+    rows.forEach(row => {
+      const pagesAttr = row.dataset.pages || 'all';
+      const onThisPage = showAllFields || pagesAttr === 'all' ||
+        pagesAttr.split(',').map(Number).includes(currentPage);
+      const matchesSearch = !q || (row.dataset.fieldName || '').toLowerCase().includes(q);
+      const visible = onThisPage && matchesSearch;
+      row.style.display = visible ? '' : 'none';
+      if (visible) visibleCount++;
+    });
+    if (rows.length === 0){
+      fieldPanelSub.textContent = '';
+    } else if (showAllFields){
+      fieldPanelSub.textContent = `Mostrando los ${rows.length} campos de todo el documento.`;
+    } else {
+      fieldPanelSub.textContent = `Mostrando ${visibleCount} de ${rows.length} campos · página ${currentPage}.`;
+    }
+  }
+
+  fieldSearch.addEventListener('input', applyFieldPageFilter);
+  pageFilterToggle.addEventListener('change', () => {
+    showAllFields = pageFilterToggle.checked;
+    applyFieldPageFilter();
+  });
+
+  // ---------- Preview rendering ----------
+  async function renderCurrentPage(){
+    if (!pdfjsDoc) return;
+    const page = await pdfjsDoc.getPage(currentPage);
+    const baseViewport = page.getViewport({ scale: 1 });
+    currentPageHeightPt = baseViewport.height;
+    const targetWidth = Math.min(620, document.querySelector('.sheet').clientWidth || 560);
+    const scale = Math.max(0.4, Math.min(2, targetWidth / baseViewport.width));
+    currentRenderScale = scale;
+    const viewport = page.getViewport({ scale });
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext('2d');
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    pageIndicator.textContent = `Página ${currentPage} / ${totalPages}`;
+    readoutPage.textContent = `${currentPage}/${totalPages}`;
+    prevBtn.disabled = totalPages <= 1;
+    nextBtn.disabled = totalPages <= 1;
+    canvas.style.cursor = (fieldRectsByPage[currentPage] && fieldRectsByPage[currentPage].length) ? 'pointer' : 'default';
+    previewHint.style.display = (fieldRectsByPage[currentPage] && fieldRectsByPage[currentPage].length) ? '' : 'none';
+    applyFieldPageFilter();
+    layoutFixedImagesForCurrentPage();
+  }
+
+  prevBtn.addEventListener('click', () => {
+    if (pendingOverlay || !pdfjsDoc) return;
+    currentPage = currentPage > 1 ? currentPage - 1 : totalPages;
+    renderCurrentPage();
+  });
+  nextBtn.addEventListener('click', () => {
+    if (pendingOverlay || !pdfjsDoc) return;
+    currentPage = currentPage < totalPages ? currentPage + 1 : 1;
+    renderCurrentPage();
+  });
+
+  // ---------- Click-to-locate: click a field's box on the page to jump to it in the list ----------
+  canvas.addEventListener('click', e => {
+    if (pendingOverlay) return;
+    const rects = fieldRectsByPage[currentPage];
+    if (!rects || rects.length === 0) return;
+
+    const canvasRect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width  / canvasRect.width;
+    const scaleY = canvas.height / canvasRect.height;
+    const rasterX = (e.clientX - canvasRect.left) * scaleX;
+    const rasterY = (e.clientY - canvasRect.top)  * scaleY;
+    const pdfX = rasterX / currentRenderScale;
+    const pdfY = currentPageHeightPt - (rasterY / currentRenderScale);
+
+    let match = null, matchArea = Infinity;
+    for (const r of rects){
+      if (pdfX >= r.x1 && pdfX <= r.x2 && pdfY >= r.y1 && pdfY <= r.y2){
+        const area = (r.x2 - r.x1) * (r.y2 - r.y1);
+        if (area < matchArea){ match = r; matchArea = area; }
+      }
+    }
+    if (match) locateFieldInPanel(match.name);
+  });
+
+  function locateFieldInPanel(name){
+    const row = fieldList.querySelector(`[data-field-name="${cssEscape(name)}"]`);
+    if (!row) return;
+    if (row.style.display === 'none' && !showAllFields){
+      // shouldn't normally happen (the field belongs to the current page), but guard anyway
+      row.style.display = '';
+    }
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const control = row.querySelector('input, select');
+    if (control) control.focus({ preventScroll: true });
+    row.classList.remove('field-row-highlight');
+    void row.offsetWidth; // restart the animation if clicked again quickly
+    row.classList.add('field-row-highlight');
+    setTimeout(() => row.classList.remove('field-row-highlight'), 1400);
+  }
+
+  function goToPage(value){
+    if (!pdfjsDoc || pendingOverlay) return;
+    const n = Math.round(Number(value));
+    if (!Number.isFinite(n)){
+      log('Ingresa un número de página válido.', 'warn');
+      return;
+    }
+    const target = Math.min(totalPages, Math.max(1, n));
+    gotoPageInput.value = '';
+    if (target === currentPage) return;
+    currentPage = target;
+    renderCurrentPage();
+  }
+
+  gotoPageBtn.addEventListener('click', () => goToPage(gotoPageInput.value));
+  gotoPageInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') goToPage(gotoPageInput.value);
+  });
+
+  // ---------- Image overlay: drag a signature/photo/stamp onto the page ----------
+  // Design note: images are kept as confirmed-but-not-yet-embedded entries (fixedImages),
+  // positioned in PDF points. They are only actually drawn into the PDF bytes at the final
+  // "Aplanar y descargar" step, AFTER the form fields are flattened — this guarantees the
+  // image ends up on top of everything, since AcroForm widget appearances always paint
+  // above the base page content, no matter when content-stream drawing happens.
+
+  function setNavLocked(locked){
+    prevBtn.disabled = locked || totalPages <= 1;
+    nextBtn.disabled = locked || totalPages <= 1;
+    gotoPageInput.disabled = locked;
+    gotoPageBtn.disabled = locked;
+    insertImageBtn.disabled = locked;
+    loadAnotherBtn.disabled = locked;
+  }
+
+  function fileToPng(file){
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('No se pudo leer la imagen.'));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('Formato de imagen no soportado.'));
+        img.onload = () => {
+          const off = document.createElement('canvas');
+          off.width = img.naturalWidth; off.height = img.naturalHeight;
+          off.getContext('2d').drawImage(img, 0, 0);
+          off.toBlob(async (blob) => {
+            if (!blob){ reject(new Error('No se pudo convertir la imagen a PNG.')); return; }
+            const buf = await blob.arrayBuffer();
+            resolve({ pngBytes: new Uint8Array(buf), width: img.naturalWidth, height: img.naturalHeight, dataUrl: reader.result });
+          }, 'image/png');
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function beginImageOverlay(file, clientX, clientY){
+    if (!pdfjsDoc) return;
+    if (pendingOverlay){
+      log('Ya hay una imagen sin fijar. Fíjala o cancélala antes de agregar otra.', 'warn');
+      return;
+    }
+    if (!file || !file.type || !file.type.startsWith('image/')){
+      log('Selecciona o suelta un archivo de imagen válido (PNG, JPG, etc.).', 'error');
+      return;
+    }
+    let info;
+    try{ info = await fileToPng(file); }
+    catch(err){ log(err.message, 'error'); return; }
+
+    const stageRect = canvasStage.getBoundingClientRect();
+    const maxW = stageRect.width * 0.6;
+    let w = Math.min(180, maxW);
+    let h = w * (info.height / info.width);
+    if (h > stageRect.height * 0.6){
+      h = stageRect.height * 0.6;
+      w = h * (info.width / info.height);
+    }
+
+    let left, top;
+    const dropped = typeof clientX === 'number' && typeof clientY === 'number' &&
+      clientX >= stageRect.left && clientX <= stageRect.right &&
+      clientY >= stageRect.top && clientY <= stageRect.bottom;
+    if (dropped){
+      left = clientX - stageRect.left - w / 2;
+      top  = clientY - stageRect.top  - h / 2;
+    } else {
+      left = (stageRect.width  - w) / 2;
+      top  = (stageRect.height - h) / 2;
+    }
+    left = Math.max(0, Math.min(left, stageRect.width  - w));
+    top  = Math.max(0, Math.min(top,  stageRect.height - h));
+
+    const el = document.createElement('div');
+    el.className = 'img-overlay';
+    el.style.left = left + 'px'; el.style.top = top + 'px';
+    el.style.width = w + 'px'; el.style.height = h + 'px';
+
+    const imgEl = document.createElement('img');
+    imgEl.src = info.dataUrl; imgEl.draggable = false;
+    el.appendChild(imgEl);
+
+    const handle = document.createElement('div');
+    handle.className = 'handle';
+    el.appendChild(handle);
+
+    canvasStage.appendChild(el);
+    pendingOverlay = {
+      el, pngBytes: info.pngBytes, dataUrl: info.dataUrl,
+      originalPngBytes: info.pngBytes, originalDataUrl: info.dataUrl
+    };
+    enableOverlayDrag(el, handle);
+
+    removeBgToggle.checked = false;
+    removeBgSensitivity.value = 225;
+    removeBgSensitivity.classList.add('hidden');
+
+    imgToolbarIdle.classList.add('hidden');
+    imgToolbarPending.classList.remove('hidden');
+    setNavLocked(true);
+    log('Imagen colocada sobre la página. Ajusta posición y tamaño, luego presiona "Fijar en la página".');
+  }
+
+  function enableOverlayDrag(el, handle){
+    let mode = null;
+    let startX = 0, startY = 0, startLeft = 0, startTop = 0, startW = 0, startH = 0;
+    function start(e, m){
+      mode = m; startX = e.clientX; startY = e.clientY;
+      startLeft = el.offsetLeft; startTop = el.offsetTop;
+      startW = el.offsetWidth; startH = el.offsetHeight;
+      e.preventDefault(); e.stopPropagation();
+      document.addEventListener('pointermove', move);
+      document.addEventListener('pointerup', stop);
+    }
+    function move(e){
+      const stageRect = canvasStage.getBoundingClientRect();
+      const dx = e.clientX - startX, dy = e.clientY - startY;
+      if (mode === 'move'){
+        let left = Math.max(0, Math.min(startLeft + dx, stageRect.width  - el.offsetWidth));
+        let top  = Math.max(0, Math.min(startTop  + dy, stageRect.height - el.offsetHeight));
+        el.style.left = left + 'px'; el.style.top = top + 'px';
+      } else if (mode === 'resize'){
+        let w = Math.max(24, Math.min(startW + dx, stageRect.width  - el.offsetLeft));
+        let h = Math.max(24, Math.min(startH + dy, stageRect.height - el.offsetTop));
+        el.style.width = w + 'px'; el.style.height = h + 'px';
+      }
+    }
+    function stop(){
+      mode = null;
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', stop);
+    }
+    el.addEventListener('pointerdown', e => { if (e.target !== handle) start(e, 'move'); });
+    handle.addEventListener('pointerdown', e => start(e, 'resize'));
+  }
+
+  function cancelDraftOverlay(){
+    if (pendingOverlay && pendingOverlay.el && pendingOverlay.el.parentNode){
+      pendingOverlay.el.parentNode.removeChild(pendingOverlay.el);
+    }
+    pendingOverlay = null;
+    imgToolbarPending.classList.add('hidden');
+    imgToolbarIdle.classList.remove('hidden');
+    setNavLocked(false);
+  }
+
+  // Makes near-white pixels transparent (useful for scanned/photographed signatures).
+  // Uses the darkest channel per pixel as the "whiteness" test so colored ink
+  // (blue/red pens) isn't accidentally erased — only pale paper/background is.
+  // NOTE: uses data: URLs throughout (never blob:/createObjectURL), because the
+  // sandboxed preview this artifact runs in can block blob: resource loads.
+  function removeWhiteBackground(dataUrl, threshold){
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth; c.height = img.naturalHeight;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        let imageData;
+        try{ imageData = ctx.getImageData(0, 0, c.width, c.height); }
+        catch(e){ reject(e); return; }
+        const data = imageData.data;
+        const band = 40; // soft transition so edges aren't jagged
+        for (let i = 0; i < data.length; i += 4){
+          const minc = Math.min(data[i], data[i+1], data[i+2]);
+          if (minc >= threshold){
+            data[i+3] = 0;
+          } else if (minc >= threshold - band){
+            const t = (threshold - minc) / band;
+            data[i+3] = Math.round(data[i+3] * t);
+          }
+        }
+        ctx.putImageData(imageData, 0, 0);
+        try{
+          const outDataUrl = c.toDataURL('image/png');
+          const base64 = outDataUrl.split(',')[1];
+          const binary = atob(base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          resolve({ pngBytes: bytes, dataUrl: outDataUrl });
+        } catch(e){
+          reject(e);
+        }
+      };
+      img.onerror = () => reject(new Error('No se pudo cargar la imagen para procesarla.'));
+      img.src = dataUrl;
+    });
+  }
+
+  async function refreshDraftBackground(){
+    if (!pendingOverlay) return;
+    const imgTag = pendingOverlay.el.querySelector('img');
+    if (removeBgToggle.checked){
+      try{
+        const sens = Number(removeBgSensitivity.value);
+        const result = await removeWhiteBackground(pendingOverlay.originalDataUrl, sens);
+        pendingOverlay.pngBytes = result.pngBytes;
+        pendingOverlay.dataUrl = result.dataUrl;
+        if (imgTag) imgTag.src = result.dataUrl;
+      } catch(err){
+        log('No se pudo quitar el fondo: ' + err.message, 'warn');
+      }
+    } else {
+      pendingOverlay.pngBytes = pendingOverlay.originalPngBytes;
+      pendingOverlay.dataUrl = pendingOverlay.originalDataUrl;
+      if (imgTag) imgTag.src = pendingOverlay.originalDataUrl;
+    }
+  }
+
+  removeBgToggle.addEventListener('change', () => {
+    removeBgSensitivity.classList.toggle('hidden', !removeBgToggle.checked);
+    refreshDraftBackground();
+  });
+  removeBgSensitivity.addEventListener('input', () => {
+    if (removeBgToggle.checked) refreshDraftBackground();
+  });
+
+  // Converts the draft overlay's on-screen rect into PDF-point coordinates and
+  // stores it as a confirmed (but not yet embedded) entry. Purely synchronous —
+  // no PDF bytes are touched here.
+  function confirmDraftOverlay(){
+    if (!pendingOverlay) return;
+    const canvasRect = canvas.getBoundingClientRect();
+    const overlayRect = pendingOverlay.el.getBoundingClientRect();
+    const scaleX = canvas.width  / canvasRect.width;
+    const scaleY = canvas.height / canvasRect.height;
+
+    const relLeftPx = (overlayRect.left - canvasRect.left) * scaleX;
+    const relTopPx  = (overlayRect.top  - canvasRect.top)  * scaleY;
+    const wPx = overlayRect.width  * scaleX;
+    const hPx = overlayRect.height * scaleY;
+
+    const wPt = wPx / currentRenderScale;
+    const hPt = hPx / currentRenderScale;
+    const xPt = relLeftPx / currentRenderScale;
+    const yPt = currentPageHeightPt - (relTopPx / currentRenderScale) - hPt;
+
+    if (pendingOverlay.el && pendingOverlay.el.parentNode){
+      pendingOverlay.el.parentNode.removeChild(pendingOverlay.el);
+    }
+
+    fixedImages.push({
+      page: currentPage, xPt, yPt, wPt, hPt,
+      pngBytes: pendingOverlay.pngBytes, dataUrl: pendingOverlay.dataUrl, el: null
+    });
+    pendingOverlay = null;
+
+    imgToolbarPending.classList.add('hidden');
+    imgToolbarIdle.classList.remove('hidden');
+    setNavLocked(false);
+
+    layoutFixedImagesForCurrentPage();
+    log(`Imagen confirmada en la página ${currentPage}. Se incrustará por encima de todo el contenido al aplanar y descargar.`, 'ok');
+  }
+
+  function createFixedImageElement(entry){
+    const el = document.createElement('div');
+    el.className = 'img-overlay fixed';
+    const img = document.createElement('img');
+    img.src = entry.dataUrl; img.draggable = false;
+    el.appendChild(img);
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'remove-btn';
+    removeBtn.title = 'Quitar esta imagen';
+    removeBtn.textContent = '✕';
+    removeBtn.addEventListener('click', e => { e.stopPropagation(); removeFixedImage(entry); });
+    el.appendChild(removeBtn);
+    return el;
+  }
+
+  function removeFixedImage(entry){
+    const idx = fixedImages.indexOf(entry);
+    if (idx >= 0) fixedImages.splice(idx, 1);
+    if (entry.el && entry.el.parentNode) entry.el.parentNode.removeChild(entry.el);
+    log(`Imagen quitada de la página ${entry.page}.`);
+  }
+
+  function clearFixedImages(){
+    fixedImages.forEach(entry => { if (entry.el && entry.el.parentNode) entry.el.parentNode.removeChild(entry.el); });
+    fixedImages = [];
+  }
+
+  function pdfRectToScreen(xPt, yPt, wPt, hPt, pageHeightPt){
+    const xRaster = xPt * currentRenderScale;
+    const wRaster = wPt * currentRenderScale;
+    const hRaster = hPt * currentRenderScale;
+    const topRaster = (pageHeightPt - yPt - hPt) * currentRenderScale;
+    const cssScaleX = canvas.clientWidth  / canvas.width;
+    const cssScaleY = canvas.clientHeight / canvas.height;
+    return {
+      left: xRaster * cssScaleX,
+      top: topRaster * cssScaleY,
+      width: wRaster * cssScaleX,
+      height: hRaster * cssScaleY
+    };
+  }
+
+  function layoutFixedImagesForCurrentPage(){
+    fixedImages.forEach(entry => {
+      if (entry.page === currentPage){
+        if (!entry.el){
+          entry.el = createFixedImageElement(entry);
+          canvasStage.appendChild(entry.el);
+        }
+        entry.el.classList.remove('hidden');
+        const r = pdfRectToScreen(entry.xPt, entry.yPt, entry.wPt, entry.hPt, currentPageHeightPt);
+        entry.el.style.left = r.left + 'px';
+        entry.el.style.top = r.top + 'px';
+        entry.el.style.width = r.width + 'px';
+        entry.el.style.height = r.height + 'px';
+      } else if (entry.el){
+        entry.el.classList.add('hidden');
+      }
+    });
+  }
+
+  insertImageBtn.addEventListener('click', () => imageFileInput.click());
+  imageFileInput.addEventListener('change', e => {
+    if (e.target.files && e.target.files[0]) beginImageOverlay(e.target.files[0]);
+    imageFileInput.value = '';
+  });
+  fixImageBtn.addEventListener('click', confirmDraftOverlay);
+  cancelImageBtn.addEventListener('click', () => { cancelDraftOverlay(); log('Imagen descartada.'); });
+
+  canvasStage.addEventListener('dragover', e => { e.preventDefault(); });
+  canvasStage.addEventListener('drop', e => {
+    e.preventDefault();
+    if (e.dataTransfer.files && e.dataTransfer.files[0]){
+      beginImageOverlay(e.dataTransfer.files[0], e.clientX, e.clientY);
+    }
+  });
+
+  // ---------- Apply values (text/checkbox/select only — images stay deferred) ----------
+  async function applyValues(){
+    if (!workingBytes) return;
+    if (pendingOverlay){
+      log('Confirmando la imagen pendiente antes de aplicar los valores…');
+      confirmDraftOverlay();
+    }
+    setStatus('Aplicando…', true);
+    try{
+      const pdfDoc = await PDFLib.PDFDocument.load(workingBytes, { ignoreEncryption:true });
+      const form = pdfDoc.getForm();
+      for (const desc of fieldDescriptors){
+        const el = fieldList.querySelector(`[data-field="${cssEscape(desc.name)}"]`);
+        if (!el) continue;
+        let field;
+        try{ field = form.getField(desc.name); } catch(e){ continue; }
+        try{
+          if (desc.type === 'text'){
+            const val = el.value || '';
+            if (val.trim() !== '' && /^-?\d+([.,]\d+)?%?$/.test(val.trim())){
+              try{ field.setAlignment(PDFLib.TextAlignment.Center); } catch(e){ /* ignore */ }
+            }
+            field.setText(val);
+          } else if (desc.type === 'checkbox'){
+            if (el.checked) field.check(); else field.uncheck();
+          } else if ((desc.type === 'radio' || desc.type === 'dropdown' || desc.type === 'optionlist') && el.value){
+            field.select(el.value);
+          }
+        } catch(err){
+          log(`No se pudo aplicar "${desc.name}": ${err.message}`, 'warn');
+        }
+      }
+      workingBytes = await pdfDoc.save();
+      fieldDescriptors = describeFields(form);
+      pdfjsDoc = await pdfjsLib.getDocument({ data: workingBytes.slice(0) }).promise;
+      await renderCurrentPage();
+      log('Valores aplicados. Vista previa actualizada.', 'ok');
+    } catch(err){
+      console.error(err);
+      log('Error al aplicar valores: ' + err.message, 'error');
+    }
+    setStatus('Listo', false);
+  }
+
+  applyBtn.addEventListener('click', applyValues);
+
+  // ---------- Flatten + embed images + download ----------
+  flattenBtn.addEventListener('click', async () => {
+    setStatus('Aplanando…', true);
+    try{
+      if (pendingOverlay) confirmDraftOverlay();
+      if (fieldDescriptors.length > 0) await applyValues();
+
+      const pdfDoc = await PDFLib.PDFDocument.load(workingBytes, { ignoreEncryption:true });
+      const form = pdfDoc.getForm();
+
+      let flattenOk = true;
+      try{ form.flatten(); }
+      catch(flattenErr){
+        flattenOk = false;
+        log('No se pudo aplanar los campos automáticamente (' + flattenErr.message + '). Se mantendrán como campos interactivos.', 'warn');
+      }
+
+      // Images are embedded AFTER flattening, so they always paint on top.
+      for (const entry of fixedImages){
+        try{
+          const page = pdfDoc.getPage(entry.page - 1);
+          const pdfImage = await pdfDoc.embedPng(entry.pngBytes);
+          page.drawImage(pdfImage, { x: entry.xPt, y: entry.yPt, width: entry.wPt, height: entry.hPt });
+        } catch(imgErr){
+          log(`No se pudo incrustar una imagen en la página ${entry.page}: ${imgErr.message}`, 'warn');
+        }
+      }
+
+      const outBytes = await pdfDoc.save();
+      downloadBytes(outBytes, baseFilename + (flattenOk ? '_aplanado.pdf' : '_rellenado.pdf'));
+
+      if (flattenOk){
+        let remaining = -1;
+        try{
+          const verifyDoc = await PDFLib.PDFDocument.load(outBytes, { ignoreEncryption:true });
+          remaining = verifyDoc.getForm().getFields().length;
+        } catch(e){ /* ignore */ }
+        if (remaining === 0) log('PDF aplanado y descargado. Verificación: 0 campos interactivos restantes.', 'ok');
+        else if (remaining > 0) log(`PDF descargado, pero quedan ${remaining} campo(s) interactivos sin aplanar.`, 'warn');
+        else log('PDF aplanado y descargado.', 'ok');
+      } else {
+        log('PDF descargado con los valores e imágenes aplicados, pero los campos no pudieron aplanarse.', 'warn');
+      }
+    } catch(err){
+      console.error(err);
+      log('Error al generar el PDF final: ' + err.message, 'error');
+    }
+    setStatus('Listo', false);
+  });
+
+  // initial log
+  log('Herramienta lista. Arrastra un PDF para comenzar.');
+})();
+</script>
+</body>
+</html>
