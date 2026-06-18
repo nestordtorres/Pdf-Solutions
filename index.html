@@ -108,7 +108,14 @@
     position:absolute; right:-6px;bottom:-6px; width:14px;height:14px;
     background:var(--accent); border:2px solid #ffffff; border-radius:3px; cursor:nwse-resize; touch-action:none;
   }
-  .img-overlay.fixed{ border:1.5px solid var(--ok); background:rgba(95,181,131,.06); cursor:default; }
+  .img-overlay.fixed{ border:1.5px solid var(--ok); background:rgba(95,181,131,.06); cursor:pointer; }
+  .img-overlay.fixed:hover{ border-color:var(--accent); background:rgba(236,93,146,.07); }
+  .img-overlay.fixed .edit-hint{
+    position:absolute; top:-22px; left:50%; transform:translateX(-50%);
+    background:rgba(60,40,50,.85); color:#fff; font-size:10px; white-space:nowrap;
+    padding:2px 7px; border-radius:4px; pointer-events:none; opacity:0; transition:opacity .15s;
+  }
+  .img-overlay.fixed:hover .edit-hint{ opacity:1; }
   .img-overlay.fixed.hidden{ display:none; }
   .img-overlay .remove-btn{
     position:absolute; top:-10px; right:-10px; width:18px;height:18px; border-radius:50%;
@@ -815,6 +822,18 @@
     handle.className = 'handle';
     el.appendChild(handle);
 
+    const draftRemoveBtn = document.createElement('button');
+    draftRemoveBtn.type = 'button';
+    draftRemoveBtn.className = 'remove-btn';
+    draftRemoveBtn.title = 'Descartar esta imagen';
+    draftRemoveBtn.textContent = '✕';
+    draftRemoveBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      cancelDraftOverlay();
+      log('Imagen descartada.');
+    });
+    el.appendChild(draftRemoveBtn);
+
     canvasStage.appendChild(el);
     pendingOverlay = {
       el, pngBytes: info.pngBytes, dataUrl: info.dataUrl,
@@ -988,9 +1007,16 @@
   function createFixedImageElement(entry){
     const el = document.createElement('div');
     el.className = 'img-overlay fixed';
+
+    const hint = document.createElement('div');
+    hint.className = 'edit-hint';
+    hint.textContent = 'Clic para reposicionar';
+    el.appendChild(hint);
+
     const img = document.createElement('img');
     img.src = entry.dataUrl; img.draggable = false;
     el.appendChild(img);
+
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'remove-btn';
@@ -998,7 +1024,72 @@
     removeBtn.textContent = '✕';
     removeBtn.addEventListener('click', e => { e.stopPropagation(); removeFixedImage(entry); });
     el.appendChild(removeBtn);
+
+    el.addEventListener('click', e => {
+      if (e.target === removeBtn) return;
+      if (pendingOverlay){ log('Fija o cancela la imagen actual antes de editar otra.', 'warn'); return; }
+      unfixImage(entry);
+    });
     return el;
+  }
+
+  function unfixImage(entry){
+    // Remove from fixedImages and put it back as a pending draft
+    const idx = fixedImages.indexOf(entry);
+    if (idx >= 0) fixedImages.splice(idx, 1);
+    if (entry.el && entry.el.parentNode) entry.el.parentNode.removeChild(entry.el);
+
+    // Convert the stored PDF-point position back to screen px so the overlay
+    // appears at the same visual location the user already set
+    const stageRect = canvasStage.getBoundingClientRect();
+    const cssScaleX = canvas.clientWidth  / canvas.width;
+    const cssScaleY = canvas.clientHeight / canvas.height;
+    const leftPx = entry.xPt * currentRenderScale * cssScaleX;
+    const topPx  = (currentPageHeightPt - entry.yPt - entry.hPt) * currentRenderScale * cssScaleY;
+    const wPx    = entry.wPt * currentRenderScale * cssScaleX;
+    const hPx    = entry.hPt * currentRenderScale * cssScaleY;
+
+    const el = document.createElement('div');
+    el.className = 'img-overlay';
+    el.style.left   = Math.max(0, leftPx) + 'px';
+    el.style.top    = Math.max(0, topPx)  + 'px';
+    el.style.width  = wPx + 'px';
+    el.style.height = hPx + 'px';
+
+    const imgEl = document.createElement('img');
+    imgEl.src = entry.dataUrl; imgEl.draggable = false;
+    el.appendChild(imgEl);
+
+    const handle = document.createElement('div');
+    handle.className = 'handle';
+    el.appendChild(handle);
+
+    const draftRemoveBtn = document.createElement('button');
+    draftRemoveBtn.type = 'button';
+    draftRemoveBtn.className = 'remove-btn';
+    draftRemoveBtn.title = 'Descartar esta imagen';
+    draftRemoveBtn.textContent = '✕';
+    draftRemoveBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      cancelDraftOverlay();
+      log('Imagen descartada.');
+    });
+    el.appendChild(draftRemoveBtn);
+
+    canvasStage.appendChild(el);
+    pendingOverlay = {
+      el, pngBytes: entry.pngBytes, dataUrl: entry.dataUrl,
+      originalPngBytes: entry.pngBytes, originalDataUrl: entry.dataUrl
+    };
+    enableOverlayDrag(el, handle);
+
+    removeBgToggle.checked = false;
+    removeBgSensitivity.value = 225;
+    removeBgSensitivity.classList.add('hidden');
+    imgToolbarIdle.classList.add('hidden');
+    imgToolbarPending.classList.remove('hidden');
+    setNavLocked(true);
+    log('Imagen de vuelta en modo edición. Reposiciona y vuelve a fijarla.');
   }
 
   function removeFixedImage(entry){
