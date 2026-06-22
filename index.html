@@ -36,6 +36,7 @@
 
   /* ---------- Header / readout bar ---------- */
   .topbar{ display:flex; align-items:stretch; gap:14px; flex-wrap:wrap; margin-bottom:18px; }
+  #undoBtn{ align-self:center; white-space:nowrap; }
   .brand{ display:flex; flex-direction:column; justify-content:center; gap:2px; flex:1; min-width:240px; }
   .brand h1{ margin:0; font-size:15px; letter-spacing:.14em; text-transform:uppercase; font-weight:800; color:var(--text); }
   .brand p{ margin:0; font-size:12.5px; color:var(--text-dim); max-width:480px; }
@@ -225,6 +226,21 @@
     background:linear-gradient(180deg,var(--accent),var(--accent-deep)); border-color:var(--accent-deep); color:#ffffff;
   }
   button.btn.ghost{background:transparent;}
+  button.btn.active{
+    background:linear-gradient(180deg,var(--accent),var(--accent-deep)); border-color:var(--accent-deep); color:#fff;
+  }
+
+  .canvas-stage.drawing-field{ cursor:crosshair; }
+  .field-draw-rect{
+    position:absolute; border:2px dashed var(--accent); background:rgba(99,102,241,.12);
+    pointer-events:none; border-radius:2px;
+  }
+  .image-field-marker{
+    position:absolute; box-sizing:border-box; border:1.5px dashed #9aa0d4; background:rgba(99,102,241,.05);
+    display:flex; align-items:center; justify-content:center; font-size:15px; color:var(--accent-deep);
+    cursor:pointer; opacity:.8; border-radius:2px;
+  }
+  .image-field-marker:hover{ background:rgba(99,102,241,.12); border-color:var(--accent); opacity:1; }
 
   /* ---------- Log ---------- */
   .log{ margin-top:16px; font-family:var(--font-mono); font-size:11.5px; border:1px solid var(--border); border-radius:8px; background:#f6f6fe; max-height:140px; overflow-y:auto; }
@@ -253,6 +269,7 @@
       <h1>Rellenar + Aplanar PDF</h1>
       <p>Carga un PDF con campos AcroForm, edítalos sobre la vista previa, agrega imágenes y descarga el resultado aplanado. Todo ocurre en tu navegador.</p>
     </div>
+    <button id="undoBtn" class="btn ghost" type="button" title="Deshacer la última acción (Ctrl+Z)" disabled>↶ Deshacer</button>
     <div class="readout">
       <span class="dot" id="statusDot"></span>
       <div class="seg"><b id="readoutFile">—</b><span>Archivo</span></div>
@@ -287,6 +304,7 @@
 
         <div class="img-toolbar" id="imgToolbarIdle">
           <button id="insertImageBtn" class="btn" type="button">+ Insertar imagen (firma, foto, sello…)</button>
+          <button id="drawFieldBtn" class="btn" type="button">+ Crear campo de foto</button>
         </div>
         <div class="img-toolbar hidden" id="imgToolbarPending">
           <span class="img-toolbar-hint">Arrastra para mover · usa la esquina para redimensionar</span>
@@ -335,6 +353,7 @@
 
       <div class="actions">
         <button id="applyBtn" class="btn" disabled>Aplicar valores</button>
+        <button id="downloadKeepBtn" class="btn ghost" disabled>Descargar sin aplanar</button>
         <button id="flattenBtn" class="btn primary" disabled>Aplanar y descargar</button>
       </div>
 
@@ -354,7 +373,12 @@
     firmas o sellos escaneados con fondo claro: vuelve transparente el papel y conserva la tinta.
     Si el PDF tiene recuadros de foto reales (campos tipo botón, como reportes de inspección con fotos por día),
     aparecerá un botón <b>"📷 Subir foto"</b> directamente en la lista de campos: la foto se ajusta sola dentro de
-    ese recuadro exacto, sin mover ni redimensionar nada.
+    ese recuadro exacto, sin mover ni redimensionar nada. Si el PDF no tiene ese recuadro todavía, usa
+    <b>"+ Crear campo de foto"</b>: dibuja un recuadro nuevo sobre la página (se ajusta solo a los bordes de campos
+    cercanos) y queda listo para subirle una foto igual que los demás.
+    <b>"Descargar sin aplanar"</b> aplica todos los valores y fotos pero mantiene los campos interactivos en el PDF final
+    (útil si necesitas seguir editándolo en otro programa); en ese caso, una imagen suelta podría quedar detrás de un
+    campo si se superponen, ya que el orden correcto solo está garantizado al aplanar.
   </p>
 </div>
 
@@ -382,6 +406,11 @@
   let fieldPagesByName = {};      // fieldName -> array of 1-based page numbers it appears on
   let fieldRectsByPage = {};      // pageNumber -> [{name, x1, y1, x2, y2}] in PDF points (bottom-left origin)
   let onPageOverlaysByName = {};  // fieldName -> array of on-page overlay elements currently mounted for it
+  let drawingFieldMode = false;   // true while the "+ Crear campo de foto" tool is armed
+  let drawStart = null;           // {x,y} in canvasStage-relative px, where the drag started
+  let drawRectEl = null;          // the live preview rectangle element while dragging
+  let undoStack = [];             // snapshots taken before each reversible action
+  const UNDO_LIMIT = 20;
   let buttonImages = {};          // fieldName -> {pngBytes, dataUrl} pending photo for an image-placeholder button field
   let showAllFields = false;      // bypass the page filter on the field list
 
@@ -405,6 +434,7 @@
   const canvasStage        = document.getElementById('canvasStage');
   const imageFileInput     = document.getElementById('imageFileInput');
   const insertImageBtn     = document.getElementById('insertImageBtn');
+  const drawFieldBtn       = document.getElementById('drawFieldBtn');
   const imgToolbarIdle       = document.getElementById('imgToolbarIdle');
   const imgToolbarPending    = document.getElementById('imgToolbarPending');
   const fixImageBtn        = document.getElementById('fixImageBtn');
@@ -418,6 +448,7 @@
   const pageFilterToggle   = document.getElementById('pageFilterToggle');
   const applyBtn          = document.getElementById('applyBtn');
   const flattenBtn        = document.getElementById('flattenBtn');
+  const downloadKeepBtn   = document.getElementById('downloadKeepBtn');
   const logEl             = document.getElementById('log');
 
   const readoutFile   = document.getElementById('readoutFile');
@@ -425,6 +456,7 @@
   const readoutPage   = document.getElementById('readoutPage');
   const readoutStatus = document.getElementById('readoutStatus');
   const statusDot     = document.getElementById('statusDot');
+  const undoBtn       = document.getElementById('undoBtn');
 
   // ---------- Helpers ----------
   function log(message, level){
@@ -481,8 +513,12 @@
   function resetTool(){
     cancelDraftOverlay();
     clearFixedImages();
-    canvasStage.querySelectorAll('.field-overlay-input').forEach(el => el.remove());
+    canvasStage.querySelectorAll('.field-overlay-input, .image-field-marker, .field-draw-rect').forEach(el => el.remove());
     onPageOverlaysByName = {};
+    drawingFieldMode = false; drawStart = null; drawRectEl = null;
+    drawFieldBtn.classList.remove('active');
+    canvasStage.classList.remove('drawing-field');
+    undoStack = []; undoBtn.disabled = true;
     originalBytes = null; workingBytes = null; pdfjsDoc = null;
     fieldDescriptors = []; currentPage = 1; totalPages = 0;
     fieldPagesByName = {}; fieldRectsByPage = {}; showAllFields = false; buttonImages = {};
@@ -492,7 +528,7 @@
     fieldSearch.value = ''; fieldSearch.disabled = true;
     pageFilterToggle.checked = false; pageFilterToggle.disabled = true;
     fieldPanelSub.textContent = '';
-    applyBtn.disabled = true; flattenBtn.disabled = true;
+    applyBtn.disabled = true; flattenBtn.disabled = true; downloadKeepBtn.disabled = true;
     gotoPageInput.value = ''; gotoPageInput.disabled = true; gotoPageBtn.disabled = true;
     zoomMultiplier = 1; zoomResetBtn.textContent = '100%';
     zoomInBtn.disabled = true; zoomOutBtn.disabled = true; zoomResetBtn.disabled = true;
@@ -540,6 +576,7 @@
     readoutFields.textContent = String(fieldDescriptors.length);
     applyBtn.disabled = fieldDescriptors.length === 0;
     flattenBtn.disabled = false;
+    downloadKeepBtn.disabled = false;
     fieldSearch.disabled = fieldDescriptors.length === 0;
     pageFilterToggle.disabled = fieldDescriptors.length === 0;
 
@@ -718,6 +755,7 @@
         fileInputBtn.addEventListener('change', async (e) => {
           const file = e.target.files && e.target.files[0];
           if (!file) return;
+          pushUndoSnapshot();
           try{
             const info = await fileToPng(file);
             buttonImages[desc.name] = { pngBytes: info.pngBytes, dataUrl: info.dataUrl };
@@ -725,6 +763,7 @@
             thumb.classList.remove('hidden');
             clearImgBtn.classList.remove('hidden');
             uploadLabel.textContent = '📷 Cambiar foto';
+            removeImageFieldMarkers(desc.name);
             log(`Foto lista para "${desc.name}". Se ajustará sola al recuadro al aplicar/descargar.`, 'ok');
           } catch(err){
             log('No se pudo cargar la foto: ' + err.message, 'error');
@@ -732,10 +771,14 @@
           fileInputBtn.value = '';
         });
         clearImgBtn.addEventListener('click', () => {
+          pushUndoSnapshot();
           delete buttonImages[desc.name];
           thumb.src = ''; thumb.classList.add('hidden');
           clearImgBtn.classList.add('hidden');
           uploadLabel.textContent = '📷 Subir foto';
+          if (fieldRectsByPage[currentPage]){
+            fieldRectsByPage[currentPage].filter(r => r.name === desc.name).forEach(r => createImageFieldMarker(desc, r));
+          }
         });
       } else {
         control = document.createElement('div');
@@ -819,15 +862,24 @@
   prevBtn.addEventListener('click', () => {
     if (!pdfjsDoc) return;
     if (pendingOverlay) confirmDraftOverlay();
+    cancelDrawModeIfActive();
     currentPage = currentPage > 1 ? currentPage - 1 : totalPages;
     renderCurrentPage();
   });
   nextBtn.addEventListener('click', () => {
     if (!pdfjsDoc) return;
     if (pendingOverlay) confirmDraftOverlay();
+    cancelDrawModeIfActive();
     currentPage = currentPage < totalPages ? currentPage + 1 : 1;
     renderCurrentPage();
   });
+
+  function cancelDrawModeIfActive(){
+    if (!drawingFieldMode) return;
+    drawingFieldMode = false;
+    drawFieldBtn.classList.remove('active');
+    canvasStage.classList.remove('drawing-field');
+  }
 
   // ---------- Click-to-locate: click a field's box on the page to jump to it in the list ----------
   function findFieldRectAtClientPoint(clientX, clientY){
@@ -856,7 +908,7 @@
   }
 
   canvas.addEventListener('click', e => {
-    if (pendingOverlay) return;
+    if (pendingOverlay || drawingFieldMode) return;
     const match = findFieldRectAtClientPoint(e.clientX, e.clientY);
     if (match) locateFieldInPanel(match.name);
   });
@@ -883,7 +935,7 @@
   const ON_PAGE_EDITABLE_TYPES = ['text', 'checkbox', 'dropdown', 'optionlist'];
 
   function renderFieldOverlaysForCurrentPage(){
-    canvasStage.querySelectorAll('.field-overlay-input').forEach(el => el.remove());
+    canvasStage.querySelectorAll('.field-overlay-input, .image-field-marker').forEach(el => el.remove());
     onPageOverlaysByName = {};
 
     const rects = fieldRectsByPage[currentPage];
@@ -894,7 +946,16 @@
 
     for (const name in byName){
       const desc = fieldDescriptors.find(d => d.name === name);
-      if (!desc || !ON_PAGE_EDITABLE_TYPES.includes(desc.type)) continue;
+      if (!desc) continue;
+
+      if (desc.type === 'button'){
+        if (!buttonImages[name]){
+          byName[name].forEach(r => createImageFieldMarker(desc, r));
+        }
+        continue;
+      }
+
+      if (!ON_PAGE_EDITABLE_TYPES.includes(desc.type)) continue;
       const panelEl = fieldList.querySelector(`[data-field="${cssEscape(name)}"]`);
       if (!panelEl) continue;
 
@@ -912,6 +973,25 @@
         el.addEventListener('change', () => syncFromOverlay(el));
       });
     }
+  }
+
+  function createImageFieldMarker(desc, rect){
+    const screen = pdfRectToScreen(rect.x1, rect.y1, rect.x2 - rect.x1, rect.y2 - rect.y1, currentPageHeightPt);
+    const el = document.createElement('div');
+    el.className = 'image-field-marker';
+    el.dataset.fieldName = desc.name;
+    el.style.left = screen.left + 'px';
+    el.style.top = screen.top + 'px';
+    el.style.width = Math.max(screen.width, 10) + 'px';
+    el.style.height = Math.max(screen.height, 10) + 'px';
+    el.textContent = '📷';
+    el.title = `${desc.name} — clic para subir foto`;
+    el.addEventListener('click', e => { e.stopPropagation(); locateFieldInPanel(desc.name); });
+    canvasStage.appendChild(el);
+  }
+
+  function removeImageFieldMarkers(name){
+    canvasStage.querySelectorAll(`.image-field-marker[data-field-name="${cssEscape(name)}"]`).forEach(el => el.remove());
   }
 
   function createOnPageControl(desc, rect, panelEl){
@@ -958,6 +1038,7 @@
     gotoPageInput.value = '';
     if (target === currentPage) return;
     if (pendingOverlay) confirmDraftOverlay();
+    cancelDrawModeIfActive();
     currentPage = target;
     renderCurrentPage();
   }
@@ -1215,6 +1296,7 @@
   // no PDF bytes are touched here.
   function confirmDraftOverlay(){
     if (!pendingOverlay) return;
+    pushUndoSnapshot();
     const canvasRect = canvas.getBoundingClientRect();
     const overlayRect = pendingOverlay.el.getBoundingClientRect();
     const scaleX = canvas.width  / canvasRect.width;
@@ -1277,6 +1359,7 @@
   }
 
   function unfixImage(entry){
+    pushUndoSnapshot();
     // Remove from fixedImages and put it back as a pending draft
     const idx = fixedImages.indexOf(entry);
     if (idx >= 0) fixedImages.splice(idx, 1);
@@ -1335,6 +1418,7 @@
   }
 
   function removeFixedImage(entry){
+    pushUndoSnapshot();
     const idx = fixedImages.indexOf(entry);
     if (idx >= 0) fixedImages.splice(idx, 1);
     if (entry.el && entry.el.parentNode) entry.el.parentNode.removeChild(entry.el);
@@ -1396,9 +1480,222 @@
     }
   });
 
+  // ---------- Draw a new image field (like Acrobat's "Add an Image Field") ----------
+  drawFieldBtn.addEventListener('click', () => {
+    if (!pdfjsDoc) return;
+    drawingFieldMode = !drawingFieldMode;
+    drawFieldBtn.classList.toggle('active', drawingFieldMode);
+    canvasStage.classList.toggle('drawing-field', drawingFieldMode);
+    if (drawingFieldMode){
+      if (pendingOverlay) confirmDraftOverlay();
+      log('Modo "crear campo de foto" activado: dibuja un recuadro sobre la página (clic, arrastra y suelta).');
+    } else {
+      log('Modo "crear campo de foto" desactivado.');
+    }
+  });
+
+  function getSnapCandidates(){
+    const rects = fieldRectsByPage[currentPage] || [];
+    const xs = [], ys = [];
+    rects.forEach(r => {
+      const s = pdfRectToScreen(r.x1, r.y1, r.x2 - r.x1, r.y2 - r.y1, currentPageHeightPt);
+      xs.push(s.left, s.left + s.width);
+      ys.push(s.top, s.top + s.height);
+    });
+    return { xs, ys };
+  }
+
+  function snapValue(value, candidates, tolerance){
+    let best = value, bestDist = tolerance;
+    candidates.forEach(c => {
+      const d = Math.abs(c - value);
+      if (d < bestDist){ bestDist = d; best = c; }
+    });
+    return best;
+  }
+
+  canvasStage.addEventListener('pointerdown', e => {
+    if (!drawingFieldMode) return;
+    if (e.target !== canvas) return; // don't start a draw on top of another overlay element
+    e.preventDefault();
+    const stageRect = canvasStage.getBoundingClientRect();
+    drawStart = { x: e.clientX - stageRect.left, y: e.clientY - stageRect.top };
+    drawRectEl = document.createElement('div');
+    drawRectEl.className = 'field-draw-rect';
+    drawRectEl.style.left = drawStart.x + 'px';
+    drawRectEl.style.top = drawStart.y + 'px';
+    drawRectEl.style.width = '0px';
+    drawRectEl.style.height = '0px';
+    canvasStage.appendChild(drawRectEl);
+    document.addEventListener('pointermove', onDrawMove);
+    document.addEventListener('pointerup', onDrawEnd);
+  });
+
+  function onDrawMove(e){
+    if (!drawStart || !drawRectEl) return;
+    const stageRect = canvasStage.getBoundingClientRect();
+    let curX = Math.max(0, Math.min(e.clientX - stageRect.left, stageRect.width));
+    let curY = Math.max(0, Math.min(e.clientY - stageRect.top, stageRect.height));
+
+    const { xs, ys } = getSnapCandidates();
+    const TOL = 8;
+    curX = snapValue(curX, xs, TOL);
+    curY = snapValue(curY, ys, TOL);
+    const startX = snapValue(drawStart.x, xs, TOL);
+    const startY = snapValue(drawStart.y, ys, TOL);
+
+    drawRectEl.style.left = Math.min(startX, curX) + 'px';
+    drawRectEl.style.top = Math.min(startY, curY) + 'px';
+    drawRectEl.style.width = Math.abs(curX - startX) + 'px';
+    drawRectEl.style.height = Math.abs(curY - startY) + 'px';
+  }
+
+  async function onDrawEnd(){
+    document.removeEventListener('pointermove', onDrawMove);
+    document.removeEventListener('pointerup', onDrawEnd);
+    drawStart = null;
+    if (!drawRectEl) return;
+
+    const left = parseFloat(drawRectEl.style.left);
+    const top = parseFloat(drawRectEl.style.top);
+    const w = parseFloat(drawRectEl.style.width);
+    const h = parseFloat(drawRectEl.style.height);
+    drawRectEl.remove();
+    drawRectEl = null;
+
+    drawingFieldMode = false;
+    drawFieldBtn.classList.remove('active');
+    canvasStage.classList.remove('drawing-field');
+
+    if (w < 14 || h < 14){
+      log('Recuadro demasiado pequeño; no se creó el campo.', 'warn');
+      return;
+    }
+    await createImageFieldFromScreenRect(left, top, w, h);
+  }
+
+  async function createImageFieldFromScreenRect(leftPx, topPx, wPx, hPx){
+    pushUndoSnapshot();
+    setStatus('Creando campo…', true);
+    try{
+      const canvasRect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / canvasRect.width;
+      const scaleY = canvas.height / canvasRect.height;
+      const wPt = (wPx * scaleX) / currentRenderScale;
+      const hPt = (hPx * scaleY) / currentRenderScale;
+      const xPt = (leftPx * scaleX) / currentRenderScale;
+      const yPt = currentPageHeightPt - ((topPx * scaleY) / currentRenderScale) - hPt;
+
+      const pdfDoc = await PDFLib.PDFDocument.load(workingBytes, { ignoreEncryption:true });
+      const form = pdfDoc.getForm();
+
+      const existingNames = new Set(form.getFields().map(f => { try{ return f.getName(); } catch(e){ return ''; } }));
+      let n = 1;
+      while (existingNames.has('CampoFoto' + n)) n++;
+      const name = 'CampoFoto' + n;
+
+      const field = form.createButton(name);
+      field.addToPage(undefined, pdfDoc.getPage(currentPage - 1), { x: xPt, y: yPt, width: wPt, height: hPt, borderWidth: 0 });
+
+      workingBytes = await pdfDoc.save();
+
+      const freshDoc = await PDFLib.PDFDocument.load(workingBytes, { ignoreEncryption:true });
+      const freshForm = freshDoc.getForm();
+      fieldDescriptors = describeFields(freshForm);
+      fieldPagesByName = buildFieldMapsFromPdfLib(freshDoc, freshForm);
+      readoutFields.textContent = String(fieldDescriptors.length);
+      applyBtn.disabled = fieldDescriptors.length === 0;
+      fieldSearch.disabled = fieldDescriptors.length === 0;
+      pageFilterToggle.disabled = fieldDescriptors.length === 0;
+
+      buildFieldPanel(fieldDescriptors);
+
+      pdfjsDoc = await pdfjsLib.getDocument({ data: workingBytes.slice(0) }).promise;
+      await renderCurrentPage();
+
+      locateFieldInPanel(name);
+      log(`Campo de imagen "${name}" creado. Usa "📷 Subir foto" en la lista para asignarle una foto.`, 'ok');
+    } catch(err){
+      console.error(err);
+      log('No se pudo crear el campo: ' + err.message, 'error');
+    }
+    setStatus('Listo', false);
+  }
+
+  // ---------- Undo: snapshot the full editable state before every reversible action ----------
+  function cloneFixedImagesForSnapshot(){
+    return fixedImages.map(e => ({
+      page: e.page, xPt: e.xPt, yPt: e.yPt, wPt: e.wPt, hPt: e.hPt,
+      pngBytes: e.pngBytes, dataUrl: e.dataUrl, el: null
+    }));
+  }
+
+  function pushUndoSnapshot(){
+    if (!workingBytes) return;
+    undoStack.push({
+      workingBytes: workingBytes.slice(0),
+      fixedImages: cloneFixedImagesForSnapshot(),
+      buttonImages: { ...buttonImages },
+      currentPage: currentPage
+    });
+    if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+    undoBtn.disabled = false;
+  }
+
+  async function undoLastAction(){
+    if (undoStack.length === 0 || !workingBytes) return;
+    const snap = undoStack.pop();
+    setStatus('Deshaciendo…', true);
+    try{
+      cancelDraftOverlay();
+      cancelDrawModeIfActive();
+
+      fixedImages.forEach(e => { if (e.el && e.el.parentNode) e.el.parentNode.removeChild(e.el); });
+
+      workingBytes = snap.workingBytes;
+      fixedImages = snap.fixedImages;
+      buttonImages = snap.buttonImages;
+
+      const pdfDoc = await PDFLib.PDFDocument.load(workingBytes, { ignoreEncryption:true });
+      const form = pdfDoc.getForm();
+      fieldDescriptors = describeFields(form);
+      fieldPagesByName = buildFieldMapsFromPdfLib(pdfDoc, form);
+      readoutFields.textContent = String(fieldDescriptors.length);
+      applyBtn.disabled = fieldDescriptors.length === 0;
+      fieldSearch.disabled = fieldDescriptors.length === 0;
+      pageFilterToggle.disabled = fieldDescriptors.length === 0;
+
+      buildFieldPanel(fieldDescriptors);
+
+      pdfjsDoc = await pdfjsLib.getDocument({ data: workingBytes.slice(0) }).promise;
+      totalPages = pdfjsDoc.numPages;
+      gotoPageInput.max = String(totalPages);
+      currentPage = Math.min(snap.currentPage, totalPages);
+      await renderCurrentPage();
+
+      log('Se deshizo la última acción.', 'ok');
+    } catch(err){
+      console.error(err);
+      log('No se pudo deshacer: ' + err.message, 'error');
+    }
+    undoBtn.disabled = undoStack.length === 0;
+    setStatus('Listo', false);
+  }
+
+  undoBtn.addEventListener('click', undoLastAction);
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'z' || e.key === 'Z')){
+      const tag = (document.activeElement && document.activeElement.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return; // let native field-undo work normally
+      e.preventDefault();
+      undoLastAction();
+    }
+  });
+
   // ---------- Apply values (text/checkbox/select only — images stay deferred) ----------
   async function applyValues(){
     if (!workingBytes) return;
+    pushUndoSnapshot();
     if (pendingOverlay){
       log('Confirmando la imagen pendiente antes de aplicar los valores…');
       confirmDraftOverlay();
@@ -1447,6 +1744,44 @@
   }
 
   applyBtn.addEventListener('click', applyValues);
+
+  // ---------- Download without flattening (keeps fields interactive) ----------
+  downloadKeepBtn.addEventListener('click', async () => {
+    setStatus('Generando…', true);
+    try{
+      if (pendingOverlay) confirmDraftOverlay();
+      if (fieldDescriptors.length > 0) await applyValues();
+
+      const pdfDoc = await PDFLib.PDFDocument.load(workingBytes, { ignoreEncryption:true });
+
+      for (const entry of fixedImages){
+        try{
+          const page = pdfDoc.getPage(entry.page - 1);
+          const pdfImage = await pdfDoc.embedPng(entry.pngBytes);
+          page.drawImage(pdfImage, { x: entry.xPt, y: entry.yPt, width: entry.wPt, height: entry.hPt });
+        } catch(imgErr){
+          log(`No se pudo incrustar una imagen en la página ${entry.page}: ${imgErr.message}`, 'warn');
+        }
+      }
+      if (fixedImages.length > 0){
+        log('Nota: como los campos no se aplanaron, una imagen insertada con "+ Insertar imagen" podría quedar detrás de un campo de formulario si se superponen en el mismo lugar.', 'warn');
+      }
+
+      const outBytes = await pdfDoc.save();
+      downloadBytes(outBytes, baseFilename + '_sin_aplanar.pdf');
+
+      let remaining = -1;
+      try{
+        const verifyDoc = await PDFLib.PDFDocument.load(outBytes, { ignoreEncryption:true });
+        remaining = verifyDoc.getForm().getFields().length;
+      } catch(e){ /* ignore */ }
+      log(`PDF descargado sin aplanar. Campos interactivos conservados: ${remaining >= 0 ? remaining : 'N/D'}.`, 'ok');
+    } catch(err){
+      console.error(err);
+      log('Error al generar el PDF: ' + err.message, 'error');
+    }
+    setStatus('Listo', false);
+  });
 
   // ---------- Flatten + embed images + download ----------
   flattenBtn.addEventListener('click', async () => {
