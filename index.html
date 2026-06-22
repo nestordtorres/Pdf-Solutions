@@ -406,11 +406,12 @@
   let fieldPagesByName = {};      // fieldName -> array of 1-based page numbers it appears on
   let fieldRectsByPage = {};      // pageNumber -> [{name, x1, y1, x2, y2}] in PDF points (bottom-left origin)
   let onPageOverlaysByName = {};  // fieldName -> array of on-page overlay elements currently mounted for it
+  let fieldControlByName = new Map(); // fieldName -> its side-panel control element (avoids repeated DOM queries)
   let drawingFieldMode = false;   // true while the "+ Crear campo de foto" tool is armed
   let drawStart = null;           // {x,y} in canvasStage-relative px, where the drag started
   let drawRectEl = null;          // the live preview rectangle element while dragging
   let undoStack = [];             // snapshots taken before each reversible action
-  const UNDO_LIMIT = 20;
+  const UNDO_LIMIT = 12;
   let buttonImages = {};          // fieldName -> {pngBytes, dataUrl} pending photo for an image-placeholder button field
   let showAllFields = false;      // bypass the page filter on the field list
 
@@ -515,6 +516,7 @@
     clearFixedImages();
     canvasStage.querySelectorAll('.field-overlay-input, .image-field-marker, .field-draw-rect').forEach(el => el.remove());
     onPageOverlaysByName = {};
+    fieldControlByName = new Map();
     drawingFieldMode = false; drawStart = null; drawRectEl = null;
     drawFieldBtn.classList.remove('active');
     canvasStage.classList.remove('drawing-field');
@@ -678,6 +680,7 @@
 
   function buildFieldPanel(descriptors){
     fieldList.innerHTML = '';
+    fieldControlByName = new Map();
     if (descriptors.length === 0){
       fieldList.innerHTML = '<div class="field-empty">Este PDF no tiene campos AcroForm rellenables. Aún puedes insertar imágenes o aplanarlo.</div>';
       return;
@@ -787,6 +790,7 @@
         control.textContent = desc.type === 'signature' ? 'Requiere firma manual' : 'No editable';
       }
       control.dataset.field = desc.name;
+      fieldControlByName.set(desc.name, control);
       if (desc.type === 'text' || desc.type === 'checkbox' || desc.type === 'dropdown' || desc.type === 'optionlist'){
         const reflectToPage = () => {
           const overlays = onPageOverlaysByName[desc.name];
@@ -1633,7 +1637,11 @@
   function pushUndoSnapshot(){
     if (!workingBytes) return;
     undoStack.push({
-      workingBytes: workingBytes.slice(0),
+      // No .slice() here on purpose: workingBytes is only ever REPLACED (never mutated
+      // in place) anywhere in this app, so the array referenced here stays valid and
+      // unchanged forever, even after `workingBytes` itself later points to something new.
+      // Copying it on every action would duplicate potentially many MB of PDF data per step.
+      workingBytes: workingBytes,
       fixedImages: cloneFixedImagesForSnapshot(),
       buttonImages: { ...buttonImages },
       currentPage: currentPage
@@ -1704,8 +1712,9 @@
     try{
       const pdfDoc = await PDFLib.PDFDocument.load(workingBytes, { ignoreEncryption:true });
       const form = pdfDoc.getForm();
+      let appliedAnyPhoto = false;
       for (const desc of fieldDescriptors){
-        const el = fieldList.querySelector(`[data-field="${cssEscape(desc.name)}"]`);
+        const el = fieldControlByName.get(desc.name);
         if (!el) continue;
         let field;
         try{ field = form.getField(desc.name); } catch(e){ continue; }
@@ -1725,6 +1734,7 @@
             if (pending){
               const pdfImage = await pdfDoc.embedPng(pending.pngBytes);
               field.setImage(pdfImage); // pdf-lib scales/centers the photo to fit the field's own rectangle
+              appliedAnyPhoto = true;
             }
           }
         } catch(err){
@@ -1733,9 +1743,16 @@
       }
       workingBytes = await pdfDoc.save();
       fieldDescriptors = describeFields(form);
-      pdfjsDoc = await pdfjsLib.getDocument({ data: workingBytes.slice(0) }).promise;
-      await renderCurrentPage();
-      log('Valores aplicados. Vista previa actualizada.', 'ok');
+      // Re-rendering the page (pdf.js reload + full rasterization) is the slowest part of
+      // this whole step. Text/checkbox/dropdown values are already visible live through the
+      // on-page overlays, so we only pay that cost when a photo was actually just embedded —
+      // that's the one case with no overlay preview, since it only becomes visible once it's
+      // baked into the page's own rendered appearance.
+      if (appliedAnyPhoto){
+        pdfjsDoc = await pdfjsLib.getDocument({ data: workingBytes.slice(0) }).promise;
+        await renderCurrentPage();
+      }
+      log('Valores aplicados.' + (appliedAnyPhoto ? ' Vista previa actualizada.' : ''), 'ok');
     } catch(err){
       console.error(err);
       log('Error al aplicar valores: ' + err.message, 'error');
