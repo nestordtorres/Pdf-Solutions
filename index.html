@@ -474,6 +474,15 @@
     statusDot.classList.toggle('live', !!live);
   }
 
+  // Lets the browser repaint/breathe between heavy synchronous steps (pdf-lib's
+  // load/flatten/save calls block the main thread completely with no progress
+  // events of its own). Without these pauses, a large multi-field PDF can block
+  // long enough that the browser thinks the tab has frozen and offers to kill it —
+  // even though it's just doing legitimate, if slow, work.
+  function nextTick(){
+    return new Promise(resolve => setTimeout(resolve, 0));
+  }
+
   function downloadBytes(bytes, filename){
     const blob = new Blob([bytes], {type:'application/pdf'});
     const url = URL.createObjectURL(blob);
@@ -1709,10 +1718,12 @@
       confirmDraftOverlay();
     }
     setStatus('Aplicando…', true);
+    await nextTick(); // let "Aplicando…" actually paint before the heavy synchronous work starts
     try{
       const pdfDoc = await PDFLib.PDFDocument.load(workingBytes, { ignoreEncryption:true });
       const form = pdfDoc.getForm();
       let appliedAnyPhoto = false;
+      let processed = 0;
       for (const desc of fieldDescriptors){
         const el = fieldControlByName.get(desc.name);
         if (!el) continue;
@@ -1740,7 +1751,10 @@
         } catch(err){
           log(`No se pudo aplicar "${desc.name}": ${err.message}`, 'warn');
         }
+        processed++;
+        if (processed % 25 === 0) await nextTick(); // breathe periodically on large forms
       }
+      await nextTick();
       workingBytes = await pdfDoc.save();
       fieldDescriptors = describeFields(form);
       // Re-rendering the page (pdf.js reload + full rasterization) is the slowest part of
@@ -1765,10 +1779,12 @@
   // ---------- Download without flattening (keeps fields interactive) ----------
   downloadKeepBtn.addEventListener('click', async () => {
     setStatus('Generando…', true);
+    await nextTick();
     try{
       if (pendingOverlay) confirmDraftOverlay();
       if (fieldDescriptors.length > 0) await applyValues();
 
+      await nextTick();
       const pdfDoc = await PDFLib.PDFDocument.load(workingBytes, { ignoreEncryption:true });
 
       for (const entry of fixedImages){
@@ -1779,11 +1795,13 @@
         } catch(imgErr){
           log(`No se pudo incrustar una imagen en la página ${entry.page}: ${imgErr.message}`, 'warn');
         }
+        await nextTick();
       }
       if (fixedImages.length > 0){
         log('Nota: como los campos no se aplanaron, una imagen insertada con "+ Insertar imagen" podría quedar detrás de un campo de formulario si se superponen en el mismo lugar.', 'warn');
       }
 
+      await nextTick();
       const outBytes = await pdfDoc.save();
       downloadBytes(outBytes, baseFilename + '_sin_aplanar.pdf');
 
@@ -1803,13 +1821,17 @@
   // ---------- Flatten + embed images + download ----------
   flattenBtn.addEventListener('click', async () => {
     setStatus('Aplanando…', true);
+    log('Procesando… en documentos con muchos campos esto puede tardar varios segundos. No cierres la pestaña.');
+    await nextTick(); // let the status text actually paint before the heavy work starts
     try{
       if (pendingOverlay) confirmDraftOverlay();
       if (fieldDescriptors.length > 0) await applyValues();
 
+      await nextTick();
       const pdfDoc = await PDFLib.PDFDocument.load(workingBytes, { ignoreEncryption:true });
       const form = pdfDoc.getForm();
 
+      await nextTick();
       let flattenOk = true;
       try{ form.flatten(); }
       catch(flattenErr){
@@ -1817,6 +1839,7 @@
         log('No se pudo aplanar los campos automáticamente (' + flattenErr.message + '). Se mantendrán como campos interactivos.', 'warn');
       }
 
+      await nextTick();
       // Images are embedded AFTER flattening, so they always paint on top.
       for (const entry of fixedImages){
         try{
@@ -1826,8 +1849,10 @@
         } catch(imgErr){
           log(`No se pudo incrustar una imagen en la página ${entry.page}: ${imgErr.message}`, 'warn');
         }
+        await nextTick();
       }
 
+      await nextTick();
       const outBytes = await pdfDoc.save();
       downloadBytes(outBytes, baseFilename + (flattenOk ? '_aplanado.pdf' : '_rellenado.pdf'));
 
